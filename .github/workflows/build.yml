@@ -1,25 +1,72 @@
-name: Jobs
+name: rCore Chapter 1 Autograding
 
-on: [push]
+on:
+  push:
+    branches:
+      - ch1
+    paths-ignore:
+      - README.md
+      - "**/*.md"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  rust_toolchain: nightly
+  RUST_BACKTRACE: 1
 
 jobs:
-  build-doc:
-    if: github.repository == 'LearningOS/rCore-Tutorial-Code'
+  build:
+    name: Build Chapter 1
     runs-on: ubuntu-latest
+
+    container:
+      image: alicesama/rcore-ci:2024a
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Build doc
+      - name: Checkout submission
+        uses: actions/checkout@v4
+
+      - name: Configure Git safe directory
+        shell: bash
+        run: |
+          git config --global --add safe.directory \
+            "/__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}"
+
+      - name: Show environment information
+        shell: bash
+        run: |
+          rustc --version
+          cargo --version
+          qemu-system-riscv64 --version
+
+      - name: Install RISC-V Rust target
+        shell: bash
+        run: |
+          rustup target add riscv64gc-unknown-none-elf
+
+      - name: Build Chapter 1 kernel
+        shell: bash
         run: |
           cd os
           make
-          cargo doc --no-deps --verbose
-      - name: Push to gh-pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./os/target/riscv64gc-unknown-none-elf/doc
-          destination_dir: ${{ github.ref_name }}
+
+      - name: Generate result summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "# rCore Chapter 1"
+            echo
+            echo "- Repository: \`${{ github.repository }}\`"
+            echo "- Branch: \`${{ github.ref_name }}\`"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "## ✅ Build passed"
+              echo
+              echo "Chapter 1 kernel compiled successfully."
+            else
+              echo "## ❌ Build failed"
+              echo
+              echo "Please inspect the failed build step."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
