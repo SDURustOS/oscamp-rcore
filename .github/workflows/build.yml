@@ -1,46 +1,155 @@
-name: Jobs
+name: rCore Chapter 7 Autograding
 
-on: [push]
+on:
+  push:
+    branches:
+      - ch7
+    paths-ignore:
+      - README.md
+      - "**/*.md"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  rust_toolchain: nightly
+  RUST_BACKTRACE: 1
+
 
 jobs:
   basic-test:
+    name: Test Chapter 7
+
     runs-on: ubuntu-latest
-    outputs:
-      points: ${{ steps.end.outputs.points}}
+
     container:
       image: alicesama/rcore-ci:2024a
+
+    outputs:
+      points: ${{ steps.score.outputs.points }}
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Run tests
+
+      - name: Checkout submission
+        uses: actions/checkout@v4
+
+
+      - name: Configure environment
+        shell: bash
         run: |
           qemu-system-riscv64 --version
+
           rustup target add riscv64gc-unknown-none-elf
-          git config --global --add safe.directory /__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}
-          git clone https://github.com/LearningOS/rCore-Tutorial-Checker.git ci-user
-          git clone https://github.com/LearningOS/rCore-Tutorial-Test.git ci-user/user
-          ID=`git rev-parse --abbrev-ref HEAD | grep -oP 'ch\K[0-9]'`
-          cd ci-user && make test CHAPTER=$ID passwd=${{ secrets.BASE_TEST_TOKEN }} OFFLINE=1 > ../output.txt
-          cat ../output.txt
-      - name: end
-        id: end
+
+          git config --global --add safe.directory \
+            "/__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}"
+
+
+      - name: Clone checker
+        shell: bash
         run: |
-          cat output.txt | grep "Test passed" | grep -oP "\d{1,}/\d{1,}" | xargs -i echo "points={}"
-          cat output.txt | grep "Test passed" | grep -oP "\d{1,}/\d{1,}" | xargs -i echo "points={}" >> $GITHUB_OUTPUT
-      - name: Require full points
+          git clone \
+            --depth 1 \
+            https://github.com/LearningOS/rCore-Tutorial-Checker.git \
+            ci-user
+
+          git clone \
+            --depth 1 \
+            https://github.com/LearningOS/rCore-Tutorial-Test.git \
+            ci-user/user
+
+
+      - name: Run Chapter 7 tests
+        shell: bash
         run: |
-          POINTS='${{ steps.end.outputs.points }}'
+          cd ci-user
+
+          set -o pipefail
+
+          make test \
+            CHAPTER=7 \
+            OFFLINE=1 \
+            | tee ../output.txt
+
+
+      - name: Read score
+        id: score
+        shell: bash
+        run: |
+
+          POINTS=$(
+            grep "Test passed" output.txt \
+            | grep -oP '\d+/\d+' \
+            | tail -n 1
+          )
+
+
           if [ -z "$POINTS" ]; then
-            echo "points is empty"
+            echo "Cannot find score."
+
+            tail -n 100 output.txt
+
             exit 1
           fi
+
+
+          echo "points=$POINTS" >> "$GITHUB_OUTPUT"
+
+          echo "Score: $POINTS"
+
+
+
+      - name: Require full points
+        shell: bash
+        run: |
+
+          POINTS="${{ steps.score.outputs.points }}"
+
           GOT="${POINTS%%/*}"
+
           TOTAL="${POINTS##*/}"
+
+
           if [ "$GOT" != "$TOTAL" ]; then
-            echo "points is not full score: $POINTS"
+
+            echo "Chapter 7 failed: $POINTS"
+
             exit 1
+
           fi
-          echo "points is full score: $POINTS"
+
+
+          echo "Chapter 7 passed: $POINTS"
+
+
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+
+          POINTS="${{ steps.score.outputs.points }}"
+
+
+          {
+            echo "# rCore Chapter 7"
+
+            echo
+
+            echo "- Branch: \`${{ github.ref_name }}\`"
+
+            echo "- Commit: \`${{ github.sha }}\`"
+
+            echo
+
+            echo "- Score: **${POINTS}**"
+
+          } >> "$GITHUB_STEP_SUMMARY"
+
+
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chapter-7-test-output
+          path: output.txt
+          retention-days: 30
