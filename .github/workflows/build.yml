@@ -1,114 +1,136 @@
-name: Jobs
+name: rCore Chapter 3 Autograding
 
-on: [push]
+on:
+  push:
+    branches:
+      - ch3
+    paths-ignore:
+      - README.md
+      - "**/*.md"
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
-  rust_toolchain: nightly
+  RUST_BACKTRACE: 1
 
 jobs:
-  build-doc:
-    if: github.repository == 'LearningOS/rCore-Tutorial-Code'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build doc
-        run: |
-          git clone https://github.com/LearningOS/rCore-Tutorial-Test.git user
-          cd os
-          make
-          cargo doc --no-deps --verbose
-      - name: Push to gh-pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./os/target/riscv64gc-unknown-none-elf/doc
-          destination_dir: ${{ github.ref_name }}
   basic-test:
+    name: Test Chapter 3
     runs-on: ubuntu-latest
-    outputs:
-      points: ${{ steps.end.outputs.points }}
+
     container:
       image: alicesama/rcore-ci:2024a
+
+    outputs:
+      points: ${{ steps.read-score.outputs.points }}
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Run tests
+      - name: Checkout submission
+        uses: actions/checkout@v4
+
+      - name: Configure environment
+        shell: bash
         run: |
           qemu-system-riscv64 --version
+          rustc --version
+          cargo --version
+
           rustup target add riscv64gc-unknown-none-elf
-          git config --global --add safe.directory /__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}
-          git clone https://github.com/LearningOS/rCore-Tutorial-Checker.git ci-user
-          git clone https://github.com/LearningOS/rCore-Tutorial-Test.git ci-user/user
-          ID=`git rev-parse --abbrev-ref HEAD | grep -oP 'ch\K[0-9]'`
-          cd ci-user
-          make test CHAPTER=$ID | tee ../output.txt
-      - name: end
-        id: end
-        run: grep -a "Test passed" output.txt | grep -oP "\d{1,}/\d{1,}" | xargs -i echo "points={}" | tee $GITHUB_OUTPUT
-      - name: Require full points
+
+          git config --global --add safe.directory \
+            "/__w/${{ github.event.repository.name }}/${{ github.event.repository.name }}"
+
+      - name: Clone official checker
+        shell: bash
         run: |
-          POINTS='${{ steps.end.outputs.points }}'
+          git clone \
+            --depth 1 \
+            https://github.com/LearningOS/rCore-Tutorial-Checker.git \
+            ci-user
+
+          git clone \
+            --depth 1 \
+            https://github.com/LearningOS/rCore-Tutorial-Test.git \
+            ci-user/user
+
+      - name: Run Chapter 3 tests
+        shell: bash
+        run: |
+          cd ci-user
+
+          set -o pipefail
+          make test CHAPTER=3 | tee ../output.txt
+
+      - name: Read test score
+        id: read-score
+        shell: bash
+        run: |
+          POINTS=$(
+            grep -a "Test passed" output.txt \
+              | grep -oP '\d+/\d+' \
+              | tail -n 1
+          )
+
           if [ -z "$POINTS" ]; then
-            echo "points is empty"
+            echo "Unable to find test score in output.txt."
+            echo
+            echo "Last 100 lines of test output:"
+            tail -n 100 output.txt || true
             exit 1
           fi
+
+          echo "points=$POINTS" >> "$GITHUB_OUTPUT"
+          echo "Detected score: $POINTS"
+
+      - name: Require full points
+        shell: bash
+        run: |
+          POINTS="${{ steps.read-score.outputs.points }}"
           GOT="${POINTS%%/*}"
           TOTAL="${POINTS##*/}"
+
+          echo "Received score: $POINTS"
+
           if [ "$GOT" != "$TOTAL" ]; then
-            echo "points is not full score: $POINTS"
+            echo "Chapter 3 tests did not receive full points."
             exit 1
           fi
-          echo "points is full score: $POINTS"
-  deploy:
-    if: github.repository != 'LearningOS/rCore-Tutorial-Code'
-    name: Deploy to pages
-    needs: basic-test
-    runs-on: ubuntu-latest
-    permissions: write-all
-    steps:
-      - uses: actions/checkout@v3
-        continue-on-error: true
-        with:
-          ref: gh-pages
-      - name: Save Log File
-        uses: yfblock/multi-rank-log@main
-        with:
-          public-dir: classroom
-          points: ${{ needs.basic-test.outputs.points }}
-      - name: GitHub Pages
-        uses: crazy-max/ghaction-github-pages@v3
-        with:
-          target_branch: gh-pages
-          build_dir: ./classroom
-          keep_history: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Upload score
+
+          echo "All Chapter 3 tests passed."
+
+      - name: Generate result summary
+        if: always()
+        shell: bash
         run: |
-          cat classroom/latest.json
-          score=$(( $(grep -o 'ch' classroom/latest.json | wc -l) * 100))
-          echo $score
+          POINTS="${{ steps.read-score.outputs.points }}"
 
-          score_json=$(jq -n \
-            --arg channel github \
-            --argjson courseId ${{ secrets.RCORE_2026_SPRING_COURSE_ID }} \
-            --arg name ${{ github.actor }} \
-            --argjson score $score \
-            --argjson totalScore 500 \
-            '{channel: $channel, courseId: $courseId, name: $name, score: $score, totalScore: $totalScore}')
+          {
+            echo "# rCore Chapter 3"
+            echo
+            echo "- Repository: \`${{ github.repository }}\`"
+            echo "- Branch: \`${{ github.ref_name }}\`"
+            echo "- Commit: \`${{ github.sha }}\`"
+            echo
 
-          response=$(curl -X POST ${{ secrets.COURSE_POST_API }} \
-            -H "accept: application/json;charset=utf-8" \
-            -H "Content-Type: application/json" \
-            -H "token: ${{ secrets.RCORE_2026_SPRING_TOKEN }}" \
-            -d "$score_json" \
-            -v)
+            if [ -n "$POINTS" ]; then
+              echo "- Test score: **$POINTS**"
+              echo
+            fi
 
-          echo "Response: $response"
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "## ✅ All tests passed"
+            else
+              echo "## ❌ Tests failed"
+              echo
+              echo "Please inspect the test logs for details."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          if echo "$response" | grep -q '"result":1'; then
-            echo "Success: The result field contains 1."
-          else
-            echo "Error: The result field does not contain 1."
-            exit 1
-          fi
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chapter-3-test-output
+          path: output.txt
+          retention-days: 30
+          if-no-files-found: warn
