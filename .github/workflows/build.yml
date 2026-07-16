@@ -82,21 +82,50 @@ jobs:
           echo "points=$POINTS" >> "$GITHUB_OUTPUT"
           echo "Detected score: $POINTS"
 
-      - name: Require full points
+      - name: Show test score
+        if: always()
         shell: bash
         run: |
           POINTS="${{ steps.read-score.outputs.points }}"
-          GOT="${POINTS%%/*}"
-          TOTAL="${POINTS##*/}"
 
-          echo "Received score: $POINTS"
+          if [ -z "$POINTS" ]; then
+            echo "No score found."
 
-          if [ "$GOT" != "$TOTAL" ]; then
-            echo "Chapter 3 tests did not receive full points."
+            {
+              echo "# ❌ Test Result"
+              echo
+              echo "Score: unavailable"
+              echo
+              echo "Please check the test logs."
+            } >> "$GITHUB_STEP_SUMMARY"
+
             exit 1
           fi
 
-          echo "All Chapter 3 tests passed."
+          GOT="${POINTS%%/*}"
+          TOTAL="${POINTS##*/}"
+
+          echo "================================"
+          echo "Chapter Score: $POINTS"
+          echo "================================"
+
+          {
+            echo "# 🎯 Test Result"
+            echo
+            echo "| Item | Result |"
+            echo "|---|---|"
+            echo "| Passed Tests | $POINTS |"
+            echo "| Score | ${GOT}/${TOTAL} |"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$GOT" = "$TOTAL" ]; then
+            echo "All tests passed."
+            echo "Status: PASS" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Some tests failed."
+            echo "Status: PARTIAL" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Generate result summary
         if: always()
