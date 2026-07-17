@@ -101,9 +101,6 @@ rustup target add riscv64gc-unknown-none-elf
 
 # 5. Clone Your Repository
 
-请使用训练营提供的个人仓库地址。
-
-例如：
 
 ```bash
 git clone https://github.com/<YOUR_USERNAME>/<YOUR_REPOSITORY>.git
